@@ -1,0 +1,24 @@
+@HostAddress = http://localhost:8080
+
+### 1. Iniciar Sesión (Conseguir el gafete)
+POST {{HostAddress}}/api/login
+Content-Type: application/json
+
+{
+  "email": "carlos@email.com",
+  "password": "12345"
+}
+
+### 2. Simular Préstamo (Usando el gafete)
+# Vas a pegar el token largo en la variable de abajo:
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQxNTgyMzEsImlzcyI6IkZpbnRlY2hOb3ZhQVBJIiwiYXVkIjoiRmludGVjaE5vdmFDbGllbnRzIn0.ioDoT3qzjxOwaKHgbmhyH1Q8nA2cMk-f2vE2m0DeLQk
+
+POST {{HostAddress}}/api/prestamos/simular
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "idUsuario": 1,
+  "monto": 8000,
+  "meses": 12
+}

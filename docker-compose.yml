@@ -1,0 +1,22 @@
+version: '3.4'
+
+services:
+  fintechnova.api:
+    image: ${DOCKER_REGISTRY-}fintechnovaapi
+    build:
+      context: .
+      dockerfile: FintechNova.API/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:latest
+    container_name: fintechnova_db_compose
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: fintechnova_db
+    ports:
+      - "5435:5432"
