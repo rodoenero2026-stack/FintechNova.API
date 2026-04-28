@@ -9,6 +9,19 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"];
 
+// ==========================================
+// 1. AQUI AGREGAMOS EL "CADENERO" (CORS)
+// ==========================================
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("PermitirTodo", policy =>
+    {
+        policy.AllowAnyOrigin()    // Permite que entre localhost, Vercel, etc.
+              .AllowAnyHeader()    // Permite enviar JSON y Tokens
+              .AllowAnyMethod();   // Permite POST, GET, PUT, DELETE
+    });
+});
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -51,6 +64,11 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// ==========================================
+// 2. AQUI ACTIVAMOS EL CORS (Antes de Auth)
+// ==========================================
+app.UseCors("PermitirTodo");
 
 // Swagger habilitado siempre (local y producción)
 app.UseSwagger();
