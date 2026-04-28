@@ -52,22 +52,21 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Swagger habilitado siempre (local y producción)
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-string connString = builder.Configuration.GetConnectionString("DefaultConnection")!;
+// Connection pool - soluciona el problema de conexiones caídas
+var dataSource = NpgsqlDataSource.Create(
+    builder.Configuration.GetConnectionString("DefaultConnection")!
+);
 
 app.MapPost("/api/registro", async (RegistroDto nuevoUsuario) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-
+    using var conn = await dataSource.OpenConnectionAsync();
     try
     {
         string sql = "INSERT INTO usuario (nombre, email, password) VALUES (@nombre, @email, @pass) RETURNING id_usuario;";
@@ -87,40 +86,43 @@ app.MapPost("/api/registro", async (RegistroDto nuevoUsuario) =>
 
 app.MapPost("/api/login", async (LoginDto loginInfo) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-
-    string sql = "SELECT nombre FROM usuario WHERE email = @email AND password = @pass;";
-    using var cmd = new NpgsqlCommand(sql, conn);
-    cmd.Parameters.AddWithValue("email", loginInfo.Email);
-    cmd.Parameters.AddWithValue("pass", loginInfo.Password);
-
-    var nombreUsuario = await cmd.ExecuteScalarAsync();
-
-    if (nombreUsuario != null)
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        string sql = "SELECT nombre FROM usuario WHERE email = @email AND password = @pass;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("email", loginInfo.Email);
+        cmd.Parameters.AddWithValue("pass", loginInfo.Password);
 
-        var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
-            issuer: jwtSettings["Issuer"],
-            audience: jwtSettings["Audience"],
-            expires: DateTime.Now.AddHours(1),
-            signingCredentials: creds
-        );
+        var nombreUsuario = await cmd.ExecuteScalarAsync();
 
-        var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
-        return Results.Ok(new { Token = tokenString, Usuario = nombreUsuario.ToString() });
+        if (nombreUsuario != null)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+            var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
+                issuer: jwtSettings["Issuer"],
+                audience: jwtSettings["Audience"],
+                expires: DateTime.Now.AddHours(1),
+                signingCredentials: creds
+            );
+
+            var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
+            return Results.Ok(new { Token = tokenString, Usuario = nombreUsuario.ToString() });
+        }
+        return Results.Unauthorized();
     }
-    return Results.Unauthorized();
+    catch (Exception ex)
+    {
+        return Results.Problem($"Error al iniciar sesión: {ex.Message}");
+    }
 });
 
 app.MapPost("/api/prestamos/simular", async (SolicitudDto request) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
+    using var conn = await dataSource.OpenConnectionAsync();
     using var tx = await conn.BeginTransactionAsync();
-
     try
     {
         string sqlSolicitud = "INSERT INTO SOLICITUD_PRESTAMO (id_usuario, monto_solicitado, plazo_meses, estado) VALUES (@idUser, @monto, @plazo, 'APROBADA') RETURNING id_solicitud;";
@@ -137,7 +139,7 @@ app.MapPost("/api/prestamos/simular", async (SolicitudDto request) =>
         cmdPrestamo.Parameters.AddWithValue("monto", request.Monto);
         int idPrestamo = Convert.ToInt32(await cmdPrestamo.ExecuteScalarAsync());
 
-        string sqlTransaccion = @"INSERT INTO TRANSACCION (id_prestamo, tipo_transaccion, monto, estado) VALUES (@idPrestamo, 'DESEMBOLSO', @monto, 'COMPLETADO');";
+        string sqlTransaccion = "INSERT INTO TRANSACCION (id_prestamo, tipo_transaccion, monto, estado) VALUES (@idPrestamo, 'DESEMBOLSO', @monto, 'COMPLETADO');";
         using var cmdTrans = new NpgsqlCommand(sqlTransaccion, conn, tx);
         cmdTrans.Parameters.AddWithValue("idPrestamo", idPrestamo);
         cmdTrans.Parameters.AddWithValue("monto", request.Monto);
@@ -155,87 +157,107 @@ app.MapPost("/api/prestamos/simular", async (SolicitudDto request) =>
 
 app.MapGet("/api/prestamos", async () =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-
-    var prestamos = new List<object>();
-    string sql = "SELECT id_prestamo, id_usuario, monto_aprobado, saldo_pendiente FROM PRESTAMO;";
-    using var cmd = new NpgsqlCommand(sql, conn);
-    using var reader = await cmd.ExecuteReaderAsync();
-
-    while (await reader.ReadAsync())
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
     {
-        prestamos.Add(new
+        var prestamos = new List<object>();
+        string sql = "SELECT id_prestamo, id_usuario, monto_aprobado, saldo_pendiente FROM PRESTAMO;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        using var reader = await cmd.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
         {
-            IdPrestamo = reader.GetInt32(0),
-            IdUsuario = reader.GetInt32(1),
-            MontoAprobado = reader.GetDecimal(2),
-            SaldoPendiente = reader.GetDecimal(3)
-        });
+            prestamos.Add(new
+            {
+                IdPrestamo = reader.GetInt32(0),
+                IdUsuario = reader.GetInt32(1),
+                MontoAprobado = reader.GetDecimal(2),
+                SaldoPendiente = reader.GetDecimal(3)
+            });
+        }
+        return Results.Ok(prestamos);
     }
-    return Results.Ok(prestamos);
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
 }).RequireAuthorization();
 
 app.MapGet("/api/prestamos/{id}", async (int id) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
-
-    string sql = "SELECT id_prestamo, id_usuario, monto_aprobado, saldo_pendiente FROM PRESTAMO WHERE id_prestamo = @id;";
-    using var cmd = new NpgsqlCommand(sql, conn);
-    cmd.Parameters.AddWithValue("id", id);
-    using var reader = await cmd.ExecuteReaderAsync();
-
-    if (await reader.ReadAsync())
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
     {
-        return Results.Ok(new
+        string sql = "SELECT id_prestamo, id_usuario, monto_aprobado, saldo_pendiente FROM PRESTAMO WHERE id_prestamo = @id;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        using var reader = await cmd.ExecuteReaderAsync();
+
+        if (await reader.ReadAsync())
         {
-            IdPrestamo = reader.GetInt32(0),
-            IdUsuario = reader.GetInt32(1),
-            MontoAprobado = reader.GetDecimal(2),
-            SaldoPendiente = reader.GetDecimal(3)
-        });
+            return Results.Ok(new
+            {
+                IdPrestamo = reader.GetInt32(0),
+                IdUsuario = reader.GetInt32(1),
+                MontoAprobado = reader.GetDecimal(2),
+                SaldoPendiente = reader.GetDecimal(3)
+            });
+        }
+        return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
     }
-    return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
 }).RequireAuthorization();
 
 app.MapPut("/api/prestamos/{id}", async (int id, PrestamoUpdateDto request) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        string sql = "UPDATE PRESTAMO SET monto_aprobado = @monto, saldo_pendiente = @saldo WHERE id_prestamo = @id;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("monto", request.MontoAprobado);
+        cmd.Parameters.AddWithValue("saldo", request.SaldoPendiente);
 
-    string sql = "UPDATE PRESTAMO SET monto_aprobado = @monto, saldo_pendiente = @saldo WHERE id_prestamo = @id;";
-    using var cmd = new NpgsqlCommand(sql, conn);
-    cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("monto", request.MontoAprobado);
-    cmd.Parameters.AddWithValue("saldo", request.SaldoPendiente);
+        int filasAfectadas = await cmd.ExecuteNonQueryAsync();
+        if (filasAfectadas > 0)
+            return Results.Ok(new { Mensaje = "Préstamo actualizado correctamente" });
 
-    int filasAfectadas = await cmd.ExecuteNonQueryAsync();
-    if (filasAfectadas > 0)
-        return Results.Ok(new { Mensaje = "Préstamo actualizado correctamente" });
-
-    return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
+        return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
 }).RequireAuthorization();
 
 app.MapDelete("/api/prestamos/{id}", async (int id) =>
 {
-    using var conn = new NpgsqlConnection(connString);
-    await conn.OpenAsync();
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        string sqlTx = "DELETE FROM TRANSACCION WHERE id_prestamo = @id;";
+        using var cmdTx = new NpgsqlCommand(sqlTx, conn);
+        cmdTx.Parameters.AddWithValue("id", id);
+        await cmdTx.ExecuteNonQueryAsync();
 
-    string sqlTx = "DELETE FROM TRANSACCION WHERE id_prestamo = @id;";
-    using var cmdTx = new NpgsqlCommand(sqlTx, conn);
-    cmdTx.Parameters.AddWithValue("id", id);
-    await cmdTx.ExecuteNonQueryAsync();
+        string sql = "DELETE FROM PRESTAMO WHERE id_prestamo = @id;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
 
-    string sql = "DELETE FROM PRESTAMO WHERE id_prestamo = @id;";
-    using var cmd = new NpgsqlCommand(sql, conn);
-    cmd.Parameters.AddWithValue("id", id);
+        int filasAfectadas = await cmd.ExecuteNonQueryAsync();
+        if (filasAfectadas > 0)
+            return Results.Ok(new { Mensaje = "Préstamo eliminado del sistema" });
 
-    int filasAfectadas = await cmd.ExecuteNonQueryAsync();
-    if (filasAfectadas > 0)
-        return Results.Ok(new { Mensaje = "Préstamo eliminado del sistema" });
-
-    return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
+        return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
 }).RequireAuthorization();
 
 app.Run();
