@@ -59,7 +59,7 @@ app.UseSwaggerUI();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Connection pool - soluciona el problema de conexiones caídas
+// Connection pool
 var dataSource = NpgsqlDataSource.Create(
     builder.Configuration.GetConnectionString("DefaultConnection")!
 );
@@ -125,21 +125,34 @@ app.MapPost("/api/prestamos/simular", async (SolicitudDto request) =>
     using var tx = await conn.BeginTransactionAsync();
     try
     {
-        string sqlSolicitud = "INSERT INTO SOLICITUD_PRESTAMO (id_usuario, monto_solicitado, plazo_meses, estado) VALUES (@idUser, @monto, @plazo, 'APROBADA') RETURNING id_solicitud;";
+        string sqlSolicitud = @"INSERT INTO SOLICITUD_PRESTAMO 
+            (id_usuario, monto_solicitado, plazo_meses, estado, curp, ine, recibo_luz_agua, comprobante_ingresos, estado_cuenta) 
+            VALUES (@idUser, @monto, @plazo, 'APROBADA', @curp, @ine, @recibo, @comprobante, @estadoCuenta) 
+            RETURNING id_solicitud;";
         using var cmdSolicitud = new NpgsqlCommand(sqlSolicitud, conn, tx);
         cmdSolicitud.Parameters.AddWithValue("idUser", request.IdUsuario);
         cmdSolicitud.Parameters.AddWithValue("monto", request.Monto);
         cmdSolicitud.Parameters.AddWithValue("plazo", request.Meses);
+        cmdSolicitud.Parameters.AddWithValue("curp", request.CURP);
+        cmdSolicitud.Parameters.AddWithValue("ine", request.INE);
+        cmdSolicitud.Parameters.AddWithValue("recibo", request.ReciboLuzAgua);
+        cmdSolicitud.Parameters.AddWithValue("comprobante", request.ComprobanteIngresos);
+        cmdSolicitud.Parameters.AddWithValue("estadoCuenta", request.EstadoCuenta);
         int idSolicitud = Convert.ToInt32(await cmdSolicitud.ExecuteScalarAsync());
 
-        string sqlPrestamo = "INSERT INTO PRESTAMO (id_solicitud, id_usuario, monto_aprobado, tasa_interes, saldo_pendiente) VALUES (@idSol, @idUser, @monto, 15.5, @monto) RETURNING id_prestamo;";
+        string sqlPrestamo = @"INSERT INTO PRESTAMO 
+            (id_solicitud, id_usuario, monto_aprobado, tasa_interes, saldo_pendiente) 
+            VALUES (@idSol, @idUser, @monto, 15.5, @monto) 
+            RETURNING id_prestamo;";
         using var cmdPrestamo = new NpgsqlCommand(sqlPrestamo, conn, tx);
         cmdPrestamo.Parameters.AddWithValue("idSol", idSolicitud);
         cmdPrestamo.Parameters.AddWithValue("idUser", request.IdUsuario);
         cmdPrestamo.Parameters.AddWithValue("monto", request.Monto);
         int idPrestamo = Convert.ToInt32(await cmdPrestamo.ExecuteScalarAsync());
 
-        string sqlTransaccion = "INSERT INTO TRANSACCION (id_prestamo, tipo_transaccion, monto, estado) VALUES (@idPrestamo, 'DESEMBOLSO', @monto, 'COMPLETADO');";
+        string sqlTransaccion = @"INSERT INTO TRANSACCION 
+            (id_prestamo, tipo_transaccion, monto, estado) 
+            VALUES (@idPrestamo, 'DESEMBOLSO', @monto, 'COMPLETADO');";
         using var cmdTrans = new NpgsqlCommand(sqlTransaccion, conn, tx);
         cmdTrans.Parameters.AddWithValue("idPrestamo", idPrestamo);
         cmdTrans.Parameters.AddWithValue("monto", request.Monto);
@@ -280,6 +293,11 @@ public class SolicitudDto
     public int IdUsuario { get; set; }
     public decimal Monto { get; set; }
     public int Meses { get; set; }
+    public string CURP { get; set; } = string.Empty;
+    public string INE { get; set; } = string.Empty;
+    public string ReciboLuzAgua { get; set; } = string.Empty;
+    public string ComprobanteIngresos { get; set; } = string.Empty;
+    public string EstadoCuenta { get; set; } = string.Empty;
 }
 
 public class PrestamoUpdateDto
