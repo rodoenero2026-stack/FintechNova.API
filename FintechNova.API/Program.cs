@@ -9,6 +9,17 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"];
 
+// CORS
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.WithOrigins("https://fintech-five-swart.vercel.app")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -52,6 +63,8 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+app.UseCors("AllowFrontend");
+
 app.UseSwagger();
 app.UseSwaggerUI();
 
@@ -87,7 +100,6 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
     using var conn = await dataSource.OpenConnectionAsync();
     try
     {
-        // ACTUALIZADO: ahora también trae el rol
         string sql = "SELECT nombre, rol FROM usuario WHERE email = @email AND password = @pass;";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("email", loginInfo.Email);
