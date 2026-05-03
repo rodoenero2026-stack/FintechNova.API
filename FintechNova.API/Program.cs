@@ -9,19 +9,6 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"];
 
-// ==========================================
-// 1. AQUI AGREGAMOS EL "CADENERO" (CORS)
-// ==========================================
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("PermitirTodo", policy =>
-    {
-        policy.AllowAnyOrigin()    // Permite que entre localhost, Vercel, etc.
-              .AllowAnyHeader()    // Permite enviar JSON y Tokens
-              .AllowAnyMethod();   // Permite POST, GET, PUT, DELETE
-    });
-});
-
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -65,19 +52,12 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// ==========================================
-// 2. AQUI ACTIVAMOS EL CORS (Antes de Auth)
-// ==========================================
-app.UseCors("PermitirTodo");
-
-// Swagger habilitado siempre (local y producción)
 app.UseSwagger();
 app.UseSwaggerUI();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Connection pool
 var dataSource = NpgsqlDataSource.Create(
     builder.Configuration.GetConnectionString("DefaultConnection")!
 );
@@ -107,15 +87,18 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
     using var conn = await dataSource.OpenConnectionAsync();
     try
     {
-        string sql = "SELECT nombre FROM usuario WHERE email = @email AND password = @pass;";
+        // ACTUALIZADO: ahora también trae el rol
+        string sql = "SELECT nombre, rol FROM usuario WHERE email = @email AND password = @pass;";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("email", loginInfo.Email);
         cmd.Parameters.AddWithValue("pass", loginInfo.Password);
 
-        var nombreUsuario = await cmd.ExecuteScalarAsync();
-
-        if (nombreUsuario != null)
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
         {
+            var nombreUsuario = reader.GetString(0);
+            var rol = reader.GetString(1);
+
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
@@ -127,7 +110,7 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
             );
 
             var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
-            return Results.Ok(new { Token = tokenString, Usuario = nombreUsuario.ToString() });
+            return Results.Ok(new { token = tokenString, usuario = nombreUsuario, rol = rol });
         }
         return Results.Unauthorized();
     }
