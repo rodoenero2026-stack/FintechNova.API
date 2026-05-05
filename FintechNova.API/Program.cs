@@ -64,10 +64,8 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 app.UseCors("AllowFrontend");
-
 app.UseSwagger();
 app.UseSwaggerUI();
-
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -85,7 +83,6 @@ app.MapPost("/api/registro", async (RegistroDto nuevoUsuario) =>
         cmd.Parameters.AddWithValue("nombre", nuevoUsuario.Nombre);
         cmd.Parameters.AddWithValue("email", nuevoUsuario.Email);
         cmd.Parameters.AddWithValue("pass", nuevoUsuario.Password);
-
         int idCreado = Convert.ToInt32(await cmd.ExecuteScalarAsync());
         return Results.Ok(new { Mensaje = "Usuario creado con éxito", UsuarioId = idCreado });
     }
@@ -104,23 +101,19 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("email", loginInfo.Email);
         cmd.Parameters.AddWithValue("pass", loginInfo.Password);
-
         using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
         {
             var nombreUsuario = reader.GetString(0);
             var rol = reader.GetString(1);
-
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
             var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
                 issuer: jwtSettings["Issuer"],
                 audience: jwtSettings["Audience"],
                 expires: DateTime.Now.AddHours(1),
                 signingCredentials: creds
             );
-
             var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
             return Results.Ok(new { token = tokenString, usuario = nombreUsuario, rol = rol });
         }
@@ -131,6 +124,89 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
         return Results.Problem($"Error al iniciar sesión: {ex.Message}");
     }
 });
+
+app.MapGet("/api/usuarios", async () =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        var usuarios = new List<object>();
+        string sql = "SELECT id_usuario, nombre, email, rol FROM usuario;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            usuarios.Add(new
+            {
+                IdUsuario = reader.GetInt32(0),
+                Nombre = reader.GetString(1),
+                Email = reader.GetString(2),
+                Rol = reader.GetString(3)
+            });
+        }
+        return Results.Ok(usuarios);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
+
+app.MapGet("/api/solicitudes", async () =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        var solicitudes = new List<object>();
+        string sql = @"SELECT s.id_solicitud, s.id_usuario, u.nombre, s.monto_solicitado, 
+                      s.plazo_meses, s.estado, s.curp, s.ine, s.recibo_luz_agua, 
+                      s.comprobante_ingresos, s.estado_cuenta 
+                      FROM SOLICITUD_PRESTAMO s 
+                      JOIN usuario u ON s.id_usuario = u.id_usuario;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            solicitudes.Add(new
+            {
+                IdSolicitud = reader.GetInt32(0),
+                IdUsuario = reader.GetInt32(1),
+                Nombre = reader.GetString(2),
+                MontoSolicitado = reader.GetDecimal(3),
+                PlazoMeses = reader.GetInt32(4),
+                Estado = reader.GetString(5),
+                CURP = reader.IsDBNull(6) ? "" : reader.GetString(6),
+                INE = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                ReciboLuzAgua = reader.IsDBNull(8) ? "" : reader.GetString(8),
+                ComprobanteIngresos = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                EstadoCuenta = reader.IsDBNull(10) ? "" : reader.GetString(10)
+            });
+        }
+        return Results.Ok(solicitudes);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
+
+app.MapPut("/api/solicitudes/{id}/estado", async (int id, DecisionDto decision) =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        string sql = "UPDATE SOLICITUD_PRESTAMO SET estado = @estado WHERE id_solicitud = @id;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("estado", decision.Estado);
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { Mensaje = "Estado actualizado" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
 
 app.MapPost("/api/prestamos/simular", async (SolicitudDto request) =>
 {
@@ -190,7 +266,6 @@ app.MapGet("/api/prestamos", async () =>
         string sql = "SELECT id_prestamo, id_usuario, monto_aprobado, saldo_pendiente FROM PRESTAMO;";
         using var cmd = new NpgsqlCommand(sql, conn);
         using var reader = await cmd.ExecuteReaderAsync();
-
         while (await reader.ReadAsync())
         {
             prestamos.Add(new
@@ -218,7 +293,6 @@ app.MapGet("/api/prestamos/{id}", async (int id) =>
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
         using var reader = await cmd.ExecuteReaderAsync();
-
         if (await reader.ReadAsync())
         {
             return Results.Ok(new
@@ -247,11 +321,9 @@ app.MapPut("/api/prestamos/{id}", async (int id, PrestamoUpdateDto request) =>
         cmd.Parameters.AddWithValue("id", id);
         cmd.Parameters.AddWithValue("monto", request.MontoAprobado);
         cmd.Parameters.AddWithValue("saldo", request.SaldoPendiente);
-
         int filasAfectadas = await cmd.ExecuteNonQueryAsync();
         if (filasAfectadas > 0)
             return Results.Ok(new { Mensaje = "Préstamo actualizado correctamente" });
-
         return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
     }
     catch (Exception ex)
@@ -273,11 +345,9 @@ app.MapDelete("/api/prestamos/{id}", async (int id) =>
         string sql = "DELETE FROM PRESTAMO WHERE id_prestamo = @id;";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("id", id);
-
         int filasAfectadas = await cmd.ExecuteNonQueryAsync();
         if (filasAfectadas > 0)
             return Results.Ok(new { Mensaje = "Préstamo eliminado del sistema" });
-
         return Results.NotFound(new { Mensaje = "Préstamo no encontrado" });
     }
     catch (Exception ex)
@@ -317,4 +387,9 @@ public class PrestamoUpdateDto
 {
     public decimal MontoAprobado { get; set; }
     public decimal SaldoPendiente { get; set; }
+}
+
+public class DecisionDto
+{
+    public string Estado { get; set; } = string.Empty;
 }
