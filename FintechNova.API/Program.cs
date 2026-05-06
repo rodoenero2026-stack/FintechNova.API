@@ -9,11 +9,12 @@ var builder = WebApplication.CreateBuilder(args);
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"];
 
+// CORS
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("[https://fintech-five-swart.vercel.app](https://fintech-five-swart.vercel.app)")
+        policy.WithOrigins("https://fintech-five-swart.vercel.app")
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
@@ -194,58 +195,17 @@ app.MapGet("/api/solicitudes", async () =>
 app.MapPut("/api/solicitudes/{id}/estado", async (int id, DecisionDto decision) =>
 {
     using var conn = await dataSource.OpenConnectionAsync();
-    using var tx = await conn.BeginTransactionAsync();
     try
     {
-        string sqlUpdate = "UPDATE SOLICITUD_PRESTAMO SET estado = @estado WHERE id_solicitud = @id;";
-        using var cmdUpdate = new NpgsqlCommand(sqlUpdate, conn, tx);
-        cmdUpdate.Parameters.AddWithValue("id", id);
-        cmdUpdate.Parameters.AddWithValue("estado", decision.Estado);
-        await cmdUpdate.ExecuteNonQueryAsync();
-
-        if (decision.Estado == "PROCESADA")
-        {
-            string sqlGetSol = "SELECT id_usuario, monto_solicitado FROM SOLICITUD_PRESTAMO WHERE id_solicitud = @id;";
-            using var cmdGet = new NpgsqlCommand(sqlGetSol, conn, tx);
-            cmdGet.Parameters.AddWithValue("id", id);
-
-            using var reader = await cmdGet.ExecuteReaderAsync();
-            if (await reader.ReadAsync())
-            {
-                int idUsuario = reader.GetInt32(0);
-                decimal monto = reader.GetDecimal(1);
-                reader.Close();
-
-                string sqlPrestamo = @"INSERT INTO PRESTAMO 
-                    (id_solicitud, id_usuario, monto_aprobado, tasa_interes, saldo_pendiente) 
-                    VALUES (@idSol, @idUser, @monto, 15.5, @monto) 
-                    RETURNING id_prestamo;";
-                using var cmdPrestamo = new NpgsqlCommand(sqlPrestamo, conn, tx);
-                cmdPrestamo.Parameters.AddWithValue("idSol", id);
-                cmdPrestamo.Parameters.AddWithValue("idUser", idUsuario);
-                cmdPrestamo.Parameters.AddWithValue("monto", monto);
-                int idPrestamo = Convert.ToInt32(await cmdPrestamo.ExecuteScalarAsync());
-
-                string sqlTransaccion = @"INSERT INTO TRANSACCION 
-                    (id_prestamo, tipo_transaccion, monto, estado) 
-                    VALUES (@idPrestamo, 'DESEMBOLSO', @monto, 'COMPLETADO');";
-                using var cmdTrans = new NpgsqlCommand(sqlTransaccion, conn, tx);
-                cmdTrans.Parameters.AddWithValue("idPrestamo", idPrestamo);
-                cmdTrans.Parameters.AddWithValue("monto", monto);
-                await cmdTrans.ExecuteNonQueryAsync();
-            }
-            else
-            {
-                reader.Close();
-            }
-        }
-
-        await tx.CommitAsync();
-        return Results.Ok(new { Mensaje = "Estado actualizado y préstamo generado" });
+        string sql = "UPDATE SOLICITUD_PRESTAMO SET estado = @estado WHERE id_solicitud = @id;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("id", id);
+        cmd.Parameters.AddWithValue("estado", decision.Estado);
+        await cmd.ExecuteNonQueryAsync();
+        return Results.Ok(new { Mensaje = "Estado actualizado" });
     }
     catch (Exception ex)
     {
-        await tx.RollbackAsync();
         return Results.Problem(ex.Message);
     }
 }).RequireAuthorization();
