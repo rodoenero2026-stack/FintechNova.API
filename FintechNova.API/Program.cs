@@ -97,15 +97,17 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
     using var conn = await dataSource.OpenConnectionAsync();
     try
     {
-        string sql = "SELECT nombre, rol FROM usuario WHERE email = @email AND password = @pass;";
+        string sql = "SELECT id_usuario, nombre, rol FROM usuario WHERE email = @email AND password = @pass;";
         using var cmd = new NpgsqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("email", loginInfo.Email);
         cmd.Parameters.AddWithValue("pass", loginInfo.Password);
         using var reader = await cmd.ExecuteReaderAsync();
         if (await reader.ReadAsync())
         {
-            var nombreUsuario = reader.GetString(0);
-            var rol = reader.GetString(1);
+            var idUsuario = reader.GetInt32(0);
+            var nombreUsuario = reader.GetString(1);
+            var rol = reader.GetString(2);
+
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
             var token = new System.IdentityModel.Tokens.Jwt.JwtSecurityToken(
@@ -115,7 +117,7 @@ app.MapPost("/api/login", async (LoginDto loginInfo) =>
                 signingCredentials: creds
             );
             var tokenString = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().WriteToken(token);
-            return Results.Ok(new { token = tokenString, usuario = nombreUsuario, rol = rol });
+            return Results.Ok(new { token = tokenString, usuario = nombreUsuario, rol = rol, idUsuario = idUsuario });
         }
         return Results.Unauthorized();
     }
@@ -201,6 +203,67 @@ app.MapPut("/api/solicitudes/{id}/estado", async (int id, DecisionDto decision) 
         cmd.Parameters.AddWithValue("estado", decision.Estado);
         await cmd.ExecuteNonQueryAsync();
         return Results.Ok(new { Mensaje = "Estado actualizado" });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
+
+app.MapGet("/api/prestamos/usuario/{idUsuario}", async (int idUsuario) =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        var prestamos = new List<object>();
+        string sql = "SELECT id_prestamo, monto_aprobado, tasa_interes, saldo_pendiente FROM PRESTAMO WHERE id_usuario = @idUsuario;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("idUsuario", idUsuario);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            prestamos.Add(new
+            {
+                IdPrestamo = reader.GetInt32(0),
+                MontoAprobado = reader.GetDecimal(1),
+                TasaInteres = reader.GetDecimal(2),
+                SaldoPendiente = reader.GetDecimal(3)
+            });
+        }
+        return Results.Ok(prestamos);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
+
+app.MapGet("/api/transacciones/usuario/{idUsuario}", async (int idUsuario) =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        var transacciones = new List<object>();
+        string sql = @"SELECT t.id_transaccion, t.tipo_transaccion, t.monto, t.estado, t.fecha_transaccion 
+                      FROM TRANSACCION t
+                      JOIN PRESTAMO p ON t.id_prestamo = p.id_prestamo
+                      WHERE p.id_usuario = @idUsuario
+                      ORDER BY t.fecha_transaccion DESC;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("idUsuario", idUsuario);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            transacciones.Add(new
+            {
+                IdTransaccion = reader.GetInt32(0),
+                TipoTransaccion = reader.GetString(1),
+                Monto = reader.GetDecimal(2),
+                Estado = reader.GetString(3),
+                Fecha = reader.GetDateTime(4).ToString("dd/MM/yyyy")
+            });
+        }
+        return Results.Ok(transacciones);
     }
     catch (Exception ex)
     {
