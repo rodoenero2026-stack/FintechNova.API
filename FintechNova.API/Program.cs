@@ -230,6 +230,7 @@ app.MapGet("/api/prestamos/usuario/{idUsuario}", async (int idUsuario) =>
                 SaldoPendiente = reader.GetDecimal(3)
             });
         }
+        Console.WriteLine("AAAAAAAAAAAAAAAAAA desde el back: " + prestamos);
         return Results.Ok(prestamos);
     }
     catch (Exception ex)
