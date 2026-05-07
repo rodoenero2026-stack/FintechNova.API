@@ -230,7 +230,6 @@ app.MapGet("/api/prestamos/usuario/{idUsuario}", async (int idUsuario) =>
                 SaldoPendiente = reader.GetDecimal(3)
             });
         }
-        Console.WriteLine("AAAAAAAAAAAAAAAAAA desde el back: " + prestamos[0]);
         return Results.Ok(prestamos);
     }
     catch (Exception ex)
@@ -421,6 +420,37 @@ app.MapDelete("/api/prestamos/{id}", async (int id) =>
 }).RequireAuthorization();
 
 app.Run();
+
+app.MapGet("/api/solicitudes/usuario/{idUsuario}", async (int idUsuario) =>
+{
+    using var conn = await dataSource.OpenConnectionAsync();
+    try
+    {
+        string sql = @"SELECT id_solicitud, monto_solicitado, plazo_meses, estado 
+                      FROM SOLICITUD_PRESTAMO 
+                      WHERE id_usuario = @idUsuario 
+                      ORDER BY id_solicitud DESC 
+                      LIMIT 1;";
+        using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("idUsuario", idUsuario);
+        using var reader = await cmd.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            return Results.Ok(new
+            {
+                IdSolicitud = reader.GetInt32(0),
+                MontoSolicitado = reader.GetDecimal(1),
+                PlazoMeses = reader.GetInt32(2),
+                Estado = reader.GetString(3)
+            });
+        }
+        return Results.Ok(null);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(ex.Message);
+    }
+}).RequireAuthorization();
 
 public class RegistroDto
 {
