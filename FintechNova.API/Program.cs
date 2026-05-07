@@ -14,9 +14,9 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("https://fintech-five-swart.vercel.app")
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        policy.AllowAnyOrigin()   // <-- Este es el cambio clave: permite conexiones de TODOS LADOS
+              .AllowAnyHeader()   // Permite cualquier tipo de encabezado (JSON, Tokens, etc.)
+              .AllowAnyMethod();   // Permite cualquier método (GET, POST, PUT, DELETE)
     });
 });
 
